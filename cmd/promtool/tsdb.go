@@ -39,6 +39,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunks"
 	tsdb_errors "github.com/prometheus/prometheus/tsdb/errors"
+	"github.com/prometheus/prometheus/tsdb/fileutil"
 )
 
 const timeDelta = 30000
@@ -612,4 +613,13 @@ func checkErr(err error) int {
 		return 1
 	}
 	return 0
+}
+
+func backfillOpenMetrics(path string, outputDir string) (err error) {
+	inputFile, err := fileutil.OpenMmapFile(path)
+	if err != nil {
+		return err
+	}
+	defer inputFile.Close()
+	return backfill(5000, inputFile.Bytes(), outputDir)
 }
