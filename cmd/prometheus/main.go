@@ -46,6 +46,8 @@ import (
 	"github.com/prometheus/common/promlog"
 	promlogflag "github.com/prometheus/common/promlog/flag"
 	"github.com/prometheus/common/version"
+	toolkit_web "github.com/prometheus/exporter-toolkit/web"
+	toolkit_webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
 	jcfg "github.com/uber/jaeger-client-go/config"
 	jprom "github.com/uber/jaeger-lib/metrics/prometheus"
 	"go.uber.org/atomic"
@@ -95,6 +97,53 @@ func init() {
 	}
 }
 
+type flagConfig struct {
+	configFile string
+
+	localStoragePath    string
+	notifier            notifier.Options
+	notifierTimeout     model.Duration
+	forGracePeriod      model.Duration
+	outageTolerance     model.Duration
+	resendDelay         model.Duration
+	web                 web.Options
+	tsdb                tsdbOptions
+	lookbackDelta       model.Duration
+	webTimeout          model.Duration
+	queryTimeout        model.Duration
+	queryConcurrency    int
+	queryMaxSamples     int
+	RemoteFlushDeadline model.Duration
+
+	featureList []string
+	// These options are extracted from featureList
+	// for ease of use.
+	enablePromQLAtModifier bool
+
+	prometheusURL   string
+	corsRegexString string
+
+	promlogConfig promlog.Config
+}
+
+// setFeatureListOptions sets the corresponding options from the featureList.
+func (c *flagConfig) setFeatureListOptions(logger log.Logger) error {
+	for _, f := range c.featureList {
+		opts := strings.Split(f, ",")
+		for _, o := range opts {
+			switch o {
+			case "promql-at-modifier":
+				c.enablePromQLAtModifier = true
+			case "":
+				continue
+			default:
+				level.Warn(logger).Log("msg", "Unknown option for --enable-feature", "option", o)
+			}
+		}
+	}
+	return nil
+}
+
 func main() {
 	if os.Getenv("DEBUG") != "" {
 		runtime.SetBlockProfileRate(20)
@@ -106,29 +155,7 @@ func main() {
 		newFlagRetentionDuration model.Duration
 	)
 
-	cfg := struct {
-		configFile string
-
-		localStoragePath    string
-		notifier            notifier.Options
-		notifierTimeout     model.Duration
-		forGracePeriod      model.Duration
-		outageTolerance     model.Duration
-		resendDelay         model.Duration
-		web                 web.Options
-		tsdb                tsdbOptions
-		lookbackDelta       model.Duration
-		webTimeout          model.Duration
-		queryTimeout        model.Duration
-		queryConcurrency    int
-		queryMaxSamples     int
-		RemoteFlushDeadline model.Duration
-
-		prometheusURL   string
-		corsRegexString string
-
-		promlogConfig promlog.Config
-	}{
+	cfg := flagConfig{
 		notifier: notifier.Options{
 			Registerer: prometheus.DefaultRegisterer,
 		},
@@ -150,6 +177,8 @@ func main() {
 
 	a.Flag("web.listen-address", "Address to listen on for UI, API, and telemetry.").
 		Default("0.0.0.0:9090").StringVar(&cfg.web.ListenAddress)
+
+	webConfig := toolkit_webflag.AddFlags(a)
 
 	a.Flag("web.read-timeout",
 		"Maximum duration before timing out read of the request, and closing idle connections.").
@@ -261,6 +290,9 @@ func main() {
 	a.Flag("query.max-samples", "Maximum number of samples a single query can load into memory. Note that queries will fail if they try to load more samples than this into memory, so this also limits the number of samples a query can return.").
 		Default("50000000").IntVar(&cfg.queryMaxSamples)
 
+	a.Flag("enable-feature", "Comma separated feature names to enable. Valid options: 'promql-at-modifier' to enable the @ modifier. See https://prometheus.io/docs/prometheus/latest/disabled_features/ for more details.").
+		Default("").StringsVar(&cfg.featureList)
+
 	promlogflag.AddFlags(a, &cfg.promlogConfig)
 
 	_, err := a.Parse(os.Args[1:])
@@ -271,6 +303,11 @@ func main() {
 	}
 
 	logger := promlog.New(&cfg.promlogConfig)
+
+	if err := cfg.setFeatureListOptions(logger); err != nil {
+		fmt.Fprintln(os.Stderr, errors.Wrapf(err, "Error parsing feature list"))
+		os.Exit(1)
+	}
 
 	cfg.web.ExternalURL, err = computeExternalURL(cfg.prometheusURL, cfg.web.ListenAddress)
 	if err != nil {
@@ -396,6 +433,7 @@ func main() {
 			ActiveQueryTracker:       promql.NewActiveQueryTracker(cfg.localStoragePath, cfg.queryConcurrency, log.With(logger, "component", "activeQueryTracker")),
 			LookbackDelta:            time.Duration(cfg.lookbackDelta),
 			NoStepSubqueryIntervalFn: noStepSubqueryInterval.Get,
+			EnableAtModifier:         cfg.enablePromQLAtModifier,
 		}
 
 		queryEngine = promql.NewEngine(opts)
@@ -557,6 +595,18 @@ func main() {
 		os.Exit(2)
 	}
 	defer closer.Close()
+
+	listener, err := webHandler.Listener()
+	if err != nil {
+		level.Error(logger).Log("msg", "Unable to start web listener", "err", err)
+		os.Exit(1)
+	}
+
+	err = toolkit_web.Validate(*webConfig)
+	if err != nil {
+		level.Error(logger).Log("msg", "Unable to validate web configuration file", "err", err)
+		os.Exit(1)
+	}
 
 	var g run.Group
 	{
@@ -772,7 +822,7 @@ func main() {
 		// Web handler.
 		g.Add(
 			func() error {
-				if err := webHandler.Run(ctxWeb); err != nil {
+				if err := webHandler.Run(ctxWeb, listener, *webConfig); err != nil {
 					return errors.Wrapf(err, "error starting web server")
 				}
 				return nil
