@@ -33,7 +33,25 @@ import (
 )
 
 var (
-	patRulePath = regexp.MustCompile(`^[^*]*(\*[^/]*)?$`)
+	patRulePath     = regexp.MustCompile(`^[^*]*(\*[^/]*)?$`)
+	reservedHeaders = map[string]struct{}{
+		// NOTE: authorization is checked specially,
+		// see RemoteWriteConfig.UnmarshalYAML.
+		// "authorization":                  {},
+		"host":                              {},
+		"content-encoding":                  {},
+		"content-length":                    {},
+		"content-type":                      {},
+		"user-agent":                        {},
+		"connection":                        {},
+		"keep-alive":                        {},
+		"proxy-authenticate":                {},
+		"proxy-authorization":               {},
+		"www-authenticate":                  {},
+		"accept-encoding":                   {},
+		"x-prometheus-remote-write-version": {},
+		"x-prometheus-remote-read-version":  {},
+	}
 )
 
 // Load parses the YAML input s into a Config.
@@ -83,24 +101,27 @@ var (
 	DefaultScrapeConfig = ScrapeConfig{
 		// ScrapeTimeout and ScrapeInterval default to the
 		// configured globals.
-		MetricsPath:     "/metrics",
-		Scheme:          "http",
-		HonorLabels:     false,
-		HonorTimestamps: true,
+		MetricsPath:      "/metrics",
+		Scheme:           "http",
+		HonorLabels:      false,
+		HonorTimestamps:  true,
+		HTTPClientConfig: config.DefaultHTTPClientConfig,
 	}
 
 	// DefaultAlertmanagerConfig is the default alertmanager configuration.
 	DefaultAlertmanagerConfig = AlertmanagerConfig{
-		Scheme:     "http",
-		Timeout:    model.Duration(10 * time.Second),
-		APIVersion: AlertmanagerAPIVersionV1,
+		Scheme:           "http",
+		Timeout:          model.Duration(10 * time.Second),
+		APIVersion:       AlertmanagerAPIVersionV1,
+		HTTPClientConfig: config.DefaultHTTPClientConfig,
 	}
 
 	// DefaultRemoteWriteConfig is the default remote write configuration.
 	DefaultRemoteWriteConfig = RemoteWriteConfig{
-		RemoteTimeout:  model.Duration(30 * time.Second),
-		QueueConfig:    DefaultQueueConfig,
-		MetadataConfig: DefaultMetadataConfig,
+		RemoteTimeout:    model.Duration(30 * time.Second),
+		QueueConfig:      DefaultQueueConfig,
+		MetadataConfig:   DefaultMetadataConfig,
+		HTTPClientConfig: config.DefaultHTTPClientConfig,
 	}
 
 	// DefaultQueueConfig is the default remote queue configuration.
@@ -130,7 +151,8 @@ var (
 
 	// DefaultRemoteReadConfig is the default remote read configuration.
 	DefaultRemoteReadConfig = RemoteReadConfig{
-		RemoteTimeout: model.Duration(1 * time.Minute),
+		RemoteTimeout:    model.Duration(1 * time.Minute),
+		HTTPClientConfig: config.DefaultHTTPClientConfig,
 	}
 )
 
@@ -570,6 +592,7 @@ func CheckTargetAddress(address model.LabelValue) error {
 type RemoteWriteConfig struct {
 	URL                 *config.URL       `yaml:"url"`
 	RemoteTimeout       model.Duration    `yaml:"remote_timeout,omitempty"`
+	Headers             map[string]string `yaml:"headers,omitempty"`
 	WriteRelabelConfigs []*relabel.Config `yaml:"write_relabel_configs,omitempty"`
 	Name                string            `yaml:"name,omitempty"`
 
@@ -600,11 +623,26 @@ func (c *RemoteWriteConfig) UnmarshalYAML(unmarshal func(interface{}) error) err
 			return errors.New("empty or null relabeling rule in remote write config")
 		}
 	}
+	if err := validateHeaders(c.Headers); err != nil {
+		return err
+	}
 
 	// The UnmarshalYAML method of HTTPClientConfig is not being called because it's not a pointer.
 	// We cannot make it a pointer as the parser panics for inlined pointer structs.
 	// Thus we just do its validation here.
 	return c.HTTPClientConfig.Validate()
+}
+
+func validateHeaders(headers map[string]string) error {
+	for header := range headers {
+		if strings.ToLower(header) == "authorization" {
+			return errors.New("authorization header must be changed via the basic_auth or authorization parameter")
+		}
+		if _, ok := reservedHeaders[strings.ToLower(header)]; ok {
+			return errors.Errorf("%s is a reserved header. It must not be changed", header)
+		}
+	}
+	return nil
 }
 
 // QueueConfig is the configuration for the queue used to write to remote
@@ -627,8 +665,9 @@ type QueueConfig struct {
 	BatchSendDeadline model.Duration `yaml:"batch_send_deadline,omitempty"`
 
 	// On recoverable errors, backoff exponentially.
-	MinBackoff model.Duration `yaml:"min_backoff,omitempty"`
-	MaxBackoff model.Duration `yaml:"max_backoff,omitempty"`
+	MinBackoff       model.Duration `yaml:"min_backoff,omitempty"`
+	MaxBackoff       model.Duration `yaml:"max_backoff,omitempty"`
+	RetryOnRateLimit bool           `yaml:"retry_on_http_429,omitempty"`
 }
 
 // MetadataConfig is the configuration for sending metadata to remote
@@ -642,10 +681,11 @@ type MetadataConfig struct {
 
 // RemoteReadConfig is the configuration for reading from remote storage.
 type RemoteReadConfig struct {
-	URL           *config.URL    `yaml:"url"`
-	RemoteTimeout model.Duration `yaml:"remote_timeout,omitempty"`
-	ReadRecent    bool           `yaml:"read_recent,omitempty"`
-	Name          string         `yaml:"name,omitempty"`
+	URL           *config.URL       `yaml:"url"`
+	RemoteTimeout model.Duration    `yaml:"remote_timeout,omitempty"`
+	Headers       map[string]string `yaml:"headers,omitempty"`
+	ReadRecent    bool              `yaml:"read_recent,omitempty"`
+	Name          string            `yaml:"name,omitempty"`
 
 	// We cannot do proper Go type embedding below as the parser will then parse
 	// values arbitrarily into the overflow maps of further-down types.
@@ -670,6 +710,9 @@ func (c *RemoteReadConfig) UnmarshalYAML(unmarshal func(interface{}) error) erro
 	}
 	if c.URL == nil {
 		return errors.New("url for remote_read is empty")
+	}
+	if err := validateHeaders(c.Headers); err != nil {
+		return err
 	}
 	// The UnmarshalYAML method of HTTPClientConfig is not being called because it's not a pointer.
 	// We cannot make it a pointer as the parser panics for inlined pointer structs.

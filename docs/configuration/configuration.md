@@ -169,12 +169,19 @@ basic_auth:
   [ password_file: <string> ]
 
 # Sets the `Authorization` header on every scrape request with
-# the configured bearer token. It is mutually exclusive with `bearer_token_file`.
-[ bearer_token: <secret> ]
+# the configured credentials.
+authorization:
+  # Sets the authentication type of the request.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials of the request. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials of the request with the credentials read from the
+  # configured file. It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
 
-# Sets the `Authorization` header on every scrape request with the bearer token
-# read from the configured file. It is mutually exclusive with `bearer_token`.
-[ bearer_token_file: <filename> ]
+# Configure whether scrape requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
 
 # Configures the scrape request's TLS settings.
 tls_config:
@@ -423,7 +430,8 @@ The following meta labels are available on targets during [relabeling](#relabel_
 
 * `__meta_digitalocean_droplet_id`: the id of the droplet
 * `__meta_digitalocean_droplet_name`: the name of the droplet
-* `__meta_digitalocean_image`: the image name of the droplet
+* `__meta_digitalocean_image`: the slug of the droplet's image
+* `__meta_digitalocean_image_name`: the display name of the droplet's image
 * `__meta_digitalocean_private_ipv4`: the private IPv4 of the droplet
 * `__meta_digitalocean_public_ipv4`: the public IPv4 of the droplet
 * `__meta_digitalocean_public_ipv6`: the public IPv6 of the droplet
@@ -435,7 +443,7 @@ The following meta labels are available on targets during [relabeling](#relabel_
 
 ```yaml
 # Authentication information used to authenticate to the API server.
-# Note that `basic_auth`, `bearer_token` and `bearer_token_file` options are
+# Note that `basic_auth` and `authorization` options are
 # mutually exclusive.
 # password and password_file are mutually exclusive.
 
@@ -445,14 +453,22 @@ basic_auth:
   [ password: <secret> ]
   [ password_file: <string> ]
 
-# Optional bearer token authentication information.
-[ bearer_token: <secret> ]
-
-# Optional bearer token file authentication information.
-[ bearer_token_file: <filename> ]
+# Optional the `Authorization` header configuration.
+authorization:
+  # Sets the authentication type.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials with the credentials read from the configured file.
+  # It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
 
 # Optional proxy URL.
 [ proxy_url: <string> ]
+
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
 
 # TLS configuration.
 tls_config:
@@ -591,7 +607,7 @@ role: <string>
 [ refresh_interval: <duration> | default = 60s ]
 
 # Authentication information used to authenticate to the Docker daemon.
-# Note that `basic_auth`, `bearer_token` and `bearer_token_file` options are
+# Note that `basic_auth` and `authorization` options are
 # mutually exclusive.
 # password and password_file are mutually exclusive.
 
@@ -601,11 +617,20 @@ basic_auth:
   [ password: <secret> ]
   [ password_file: <string> ]
 
-# Optional bearer token authentication information.
-[ bearer_token: <secret> ]
+# Optional the `Authorization` header configuration.
+authorization:
+  # Sets the authentication type.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials with the credentials read from the configured file.
+  # It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
 
-# Optional bearer token file authentication information.
-[ bearer_token_file: <filename> ]
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
+
 ```
 
 The [relabeling phase](#relabel_config) is the preferred and more powerful
@@ -988,7 +1013,7 @@ The labels below are only available for targets with `role` set to `robot`:
 role: <string>
 
 # Authentication information used to authenticate to the API server.
-# Note that `basic_auth`, `bearer_token` and `bearer_token_file` options are
+# Note that `basic_auth` and `authorization` options are
 # mutually exclusive.
 # password and password_file are mutually exclusive.
 
@@ -999,15 +1024,23 @@ basic_auth:
   [ password: <secret> ]
   [ password_file: <string> ]
 
-# Optional bearer token authentication information, required when role is hcloud
-# Role robot does not support bearer token authentication.
-[ bearer_token: <secret> ]
-
-# Optional bearer token file authentication information.
-[ bearer_token_file: <filename> ]
+# Optional the `Authorization` header configuration. required when role is
+# hcloud. Role robot does not support bearer token authentication.
+authorization:
+  # Sets the authentication type.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials with the credentials read from the configured file.
+  # It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
 
 # Optional proxy URL.
 [ proxy_url: <string> ]
+
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
 
 # TLS configuration.
 tls_config:
@@ -1153,7 +1186,7 @@ See below for the configuration options for Kubernetes discovery:
 role: <string>
 
 # Optional authentication information used to authenticate to the API server.
-# Note that `basic_auth`, `bearer_token` and `bearer_token_file` options are
+# Note that `basic_auth` and `authorization` options are
 # mutually exclusive.
 # password and password_file are mutually exclusive.
 
@@ -1163,14 +1196,22 @@ basic_auth:
   [ password: <secret> ]
   [ password_file: <string> ]
 
-# Optional bearer token authentication information.
-[ bearer_token: <secret> ]
-
-# Optional bearer token file authentication information.
-[ bearer_token_file: <filename> ]
+# Optional the `Authorization` header configuration.
+authorization:
+  # Sets the authentication type.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials with the credentials read from the configured file.
+  # It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
 
 # Optional proxy URL.
 [ proxy_url: <string> ]
+
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
 
 # TLS configuration.
 tls_config:
@@ -1252,15 +1293,22 @@ basic_auth:
   [ password: <secret> ]
   [ password_file: <string> ]
 
-# Sets the `Authorization` header on every request with
-# the configured bearer token. It is mutually exclusive with `bearer_token_file` and other authentication mechanisms.
-# NOTE: The current version of DC/OS marathon (v1.11.0) does not support standard Bearer token authentication. Use `auth_token` instead.
-[ bearer_token: <string> ]
+# Optional the `Authorization` header configuration.
+# NOTE: The current version of DC/OS marathon (v1.11.0) does not support
+# standard `Authentication` header, use `auth_token` or `auth_token_file`
+# instead.
+authorization:
+  # Sets the authentication type.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials with the credentials read from the configured file.
+  # It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
 
-# Sets the `Authorization` header on every request with the bearer token
-# read from the configured file. It is mutually exclusive with `bearer_token` and other authentication mechanisms.
-# NOTE: The current version of DC/OS marathon (v1.11.0) does not support standard Bearer token authentication. Use `auth_token_file` instead.
-[ bearer_token_file: <filename> ]
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
 
 # TLS configuration for connecting to marathon servers
 tls_config:
@@ -1446,13 +1494,16 @@ basic_auth:
   [ password: <secret> ]
   [ password_file: <string> ]
 
-# Sets the `Authorization` header on every request with
-# the configured bearer token. It is mutually exclusive with `bearer_token_file`.
-[ bearer_token: <string> ]
-
-# Sets the `Authorization` header on every request with the bearer token
-# read from the configured file. It is mutually exclusive with `bearer_token`.
-[ bearer_token_file: <filename> ]
+# Optional the `Authorization` header configuration.
+authorization:
+  # Sets the authentication type.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials with the credentials read from the configured file.
+  # It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
 
 # Configures the scrape request's TLS settings.
 tls_config:
@@ -1460,6 +1511,9 @@ tls_config:
 
 # Optional proxy URL.
 [ proxy_url: <string> ]
+
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
 
 # Refresh interval to re-read the app instance list.
 [ refresh_interval: <duration> | default = 30s ]
@@ -1615,13 +1669,16 @@ basic_auth:
   [ password: <secret> ]
   [ password_file: <string> ]
 
-# Sets the `Authorization` header on every request with
-# the configured bearer token. It is mutually exclusive with `bearer_token_file`.
-[ bearer_token: <string> ]
-
-# Sets the `Authorization` header on every request with the bearer token
-# read from the configured file. It is mutually exclusive with `bearer_token`.
-[ bearer_token_file: <filename> ]
+# Optional the `Authorization` header configuration.
+authorization:
+  # Sets the authentication type.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials with the credentials read from the configured file.
+  # It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
 
 # Configures the scrape request's TLS settings.
 tls_config:
@@ -1629,6 +1686,9 @@ tls_config:
 
 # Optional proxy URL.
 [ proxy_url: <string> ]
+
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
 
 # List of Azure service discovery configurations.
 azure_sd_configs:
@@ -1719,6 +1779,11 @@ url: <string>
 # Timeout for requests to the remote write endpoint.
 [ remote_timeout: <duration> | default = 30s ]
 
+# Custom HTTP headers to be sent along with each remote write request.
+# Be aware that headers that are set by Prometheus itself can't be overwritten.
+headers:
+  [ <string>: <string> ... ]
+
 # List of remote write relabel configurations.
 write_relabel_configs:
   [ - <relabel_config> ... ]
@@ -1736,13 +1801,16 @@ basic_auth:
   [ password: <secret> ]
   [ password_file: <string> ]
 
-# Sets the `Authorization` header on every remote write request with
-# the configured bearer token. It is mutually exclusive with `bearer_token_file`.
-[ bearer_token: <string> ]
-
-# Sets the `Authorization` header on every remote write request with the bearer token
-# read from the configured file. It is mutually exclusive with `bearer_token`.
-[ bearer_token_file: <filename> ]
+# Optional the `Authorization` header configuration.
+authorization:
+  # Sets the authentication type.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials with the credentials read from the configured file.
+  # It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
 
 # Configures the remote write request's TLS settings.
 tls_config:
@@ -1750,6 +1818,9 @@ tls_config:
 
 # Optional proxy URL.
 [ proxy_url: <string> ]
+
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
 
 # Configures the queue used to write to remote storage.
 queue_config:
@@ -1770,6 +1841,9 @@ queue_config:
   [ min_backoff: <duration> | default = 30ms ]
   # Maximum retry delay.
   [ max_backoff: <duration> | default = 100ms ]
+  # Retry upon receiving a 429 status code from the remote-write storage.
+  # This is experimental and might change in the future.
+  [ retry_on_http_429: <boolean> | default = false ]
 
 # Configures the sending of series metadata to remote storage.
 # Metadata configuration is subject to change at any point
@@ -1804,6 +1878,11 @@ required_matchers:
 # Timeout for requests to the remote read endpoint.
 [ remote_timeout: <duration> | default = 1m ]
 
+# Custom HTTP headers to be sent along with each remote read request.
+# Be aware that headers that are set by Prometheus itself can't be overwritten.
+headers:
+  [ <string>: <string> ... ]
+
 # Whether reads should be made for queries for time ranges that
 # the local storage should have complete data for.
 [ read_recent: <boolean> | default = false ]
@@ -1816,13 +1895,16 @@ basic_auth:
   [ password: <secret> ]
   [ password_file: <string> ]
 
-# Sets the `Authorization` header on every remote read request with
-# the configured bearer token. It is mutually exclusive with `bearer_token_file`.
-[ bearer_token: <string> ]
-
-# Sets the `Authorization` header on every remote read request with the bearer token
-# read from the configured file. It is mutually exclusive with `bearer_token`.
-[ bearer_token_file: <filename> ]
+# Optional the `Authorization` header configuration.
+authorization:
+  # Sets the authentication type.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials with the credentials read from the configured file.
+  # It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
 
 # Configures the remote read request's TLS settings.
 tls_config:
@@ -1830,6 +1912,9 @@ tls_config:
 
 # Optional proxy URL.
 [ proxy_url: <string> ]
+
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
 ```
 
 There is a list of
