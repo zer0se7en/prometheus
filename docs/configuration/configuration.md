@@ -202,6 +202,10 @@ consul_sd_configs:
 digitalocean_sd_configs:
   [ - <digitalocean_sd_config> ... ]
 
+# List of Docker service discovery configurations.
+docker_sd_configs:
+  [ - <docker_sd_config> ... ]
+
 # List of Docker Swarm service discovery configurations.
 dockerswarm_sd_configs:
   [ - <dockerswarm_sd_config> ... ]
@@ -245,6 +249,10 @@ nerve_sd_configs:
 # List of OpenStack service discovery configurations.
 openstack_sd_configs:
   [ - <openstack_sd_config> ... ]
+
+# List of Scaleway service discovery configurations.
+scaleway_sd_configs:
+  [ - <scaleway_sd_config> ... ]
 
 # List of Zookeeper Serverset service discovery configurations.
 serverset_sd_configs:
@@ -440,6 +448,7 @@ The following meta labels are available on targets during [relabeling](#relabel_
 * `__meta_digitalocean_status`: the status of the droplet
 * `__meta_digitalocean_features`: the comma-separated list of features of the droplet
 * `__meta_digitalocean_tags`: the comma-separated list of tags of the droplet
+* `__meta_digitalocean_vpc`: the id of the droplet's VPC
 
 ```yaml
 # Authentication information used to authenticate to the API server.
@@ -480,6 +489,94 @@ tls_config:
 # The time after which the droplets are refreshed.
 [ refresh_interval: <duration> | default = 60s ]
 ```
+
+### `<docker_sd_config>`
+
+Docker SD configurations allow retrieving scrape targets from [Docker Engine](https://docs.docker.com/engine/) hosts.
+
+This SD discovers "containers" and will create a target for each network IP and port the container is configured to expose.
+
+Available meta labels:
+
+* `__meta_docker_container_id`: the id of the container
+* `__meta_docker_container_name`: the name of the container
+* `__meta_docker_container_network_mode`: the network mode of the container
+* `__meta_docker_container_label_<labelname>`: each label of the container
+* `__meta_docker_network_id`: the ID of the network
+* `__meta_docker_network_name`: the name of the network
+* `__meta_docker_network_ingress`: whether the network is ingress
+* `__meta_docker_network_internal`: whether the network is internal
+* `__meta_docker_network_label_<labelname>`: each label of the network
+* `__meta_docker_network_scope`: the scope of the network
+* `__meta_docker_network_ip`: the IP of the container in this network
+* `__meta_docker_port_private`: the port on the container
+* `__meta_docker_port_public`: the external port if a port-mapping exists
+* `__meta_docker_port_public_ip`: the public IP if a port-mapping exists
+
+See below for the configuration options for Docker discovery:
+
+```yaml
+# Address of the Docker daemon.
+host: <string>
+
+# Optional proxy URL.
+[ proxy_url: <string> ]
+
+# TLS configuration.
+tls_config:
+  [ <tls_config> ]
+
+# The port to scrape metrics from, when `role` is nodes, and for discovered
+# tasks and services that don't have published ports.
+[ port: <int> | default = 80 ]
+
+# Optional filters to limit the discovery process to a subset of available
+# resources.
+# The available filters are listed in the upstream documentation:
+# Services: https://docs.docker.com/engine/api/v1.40/#operation/ServiceList
+# Tasks: https://docs.docker.com/engine/api/v1.40/#operation/TaskList
+# Nodes: https://docs.docker.com/engine/api/v1.40/#operation/NodeList
+[ filters:
+  [ - name: <string>
+      values: <string>, [...] ]
+
+# The time after which the containers are refreshed.
+[ refresh_interval: <duration> | default = 60s ]
+
+# Authentication information used to authenticate to the Docker daemon.
+# Note that `basic_auth` and `authorization` options are
+# mutually exclusive.
+# password and password_file are mutually exclusive.
+
+# Optional HTTP basic authentication information.
+basic_auth:
+  [ username: <string> ]
+  [ password: <secret> ]
+  [ password_file: <string> ]
+
+# Optional the `Authorization` header configuration.
+authorization:
+  # Sets the authentication type.
+  [ type: <string> | default: Bearer ]
+  # Sets the credentials. It is mutually exclusive with
+  # `credentials_file`.
+  [ credentials: <secret> ]
+  # Sets the credentials with the credentials read from the configured file.
+  # It is mutually exclusive with `credentials`.
+  [ credentials_file: <filename> ]
+
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
+
+```
+
+The [relabeling phase](#relabel_config) is the preferred and more powerful
+way to filter containers. For users with thousands of containers it
+can be more efficient to use the Docker API directly which has basic support for
+filtering containers (using `filters`).
+
+See [this example Prometheus configuration file](/documentation/examples/prometheus-docker.yml)
+for a detailed example of configuring Prometheus for Docker Engine.
 
 ### `<dockerswarm_sd_config>`
 
@@ -596,14 +693,12 @@ role: <string>
 # Optional filters to limit the discovery process to a subset of available
 # resources.
 # The available filters are listed in the upstream documentation:
-# Services: https://docs.docker.com/engine/api/v1.40/#operation/ServiceList
-# Tasks: https://docs.docker.com/engine/api/v1.40/#operation/TaskList
-# Nodes: https://docs.docker.com/engine/api/v1.40/#operation/NodeList
+# https://docs.docker.com/engine/api/v1.40/#operation/ContainerList
 [ filters:
   [ - name: <string>
       values: <string>, [...] ]
 
-# The time after which the droplets are refreshed.
+# The time after which the service discovery data is refreshed.
 [ refresh_interval: <duration> | default = 60s ]
 
 # Authentication information used to authenticate to the Docker daemon.
@@ -1222,13 +1317,13 @@ namespaces:
   names:
     [ - <string> ]
 
-# Optional label and field selectors to limit the discovery process to a subset of available resources. 
+# Optional label and field selectors to limit the discovery process to a subset of available resources.
 # See https://kubernetes.io/docs/concepts/overview/working-with-objects/field-selectors/
-# and https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/ to learn more about the possible 
+# and https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/ to learn more about the possible
 # filters that can be used. Endpoints role supports pod, service and endpoints selectors, other roles
 # only support selectors matching the role itself (e.g. node role can only contain node selectors).
 
-# Note: When making decision about using field/label selector make sure that this 
+# Note: When making decision about using field/label selector make sure that this
 # is the best approach - it will prevent Prometheus from reusing single list/watch
 # for all scrape configs. This might result in a bigger load on the Kubernetes API,
 # because per each selector combination there will be additional LIST/WATCH. On the other hand,
@@ -1523,6 +1618,109 @@ See [the Prometheus eureka-sd configuration file](/documentation/examples/promet
 for a practical example on how to set up your Eureka app and your Prometheus
 configuration.
 
+### `<scaleway_sd_config>`
+
+Scaleway SD configurations allow retrieving scrape targets from [Scaleway instances](https://www.scaleway.com/en/virtual-instances/) and [baremetal services](https://www.scaleway.com/en/bare-metal-servers/).
+
+The following meta labels are available on targets during [relabeling](#relabel_config):
+
+#### Instance role
+
+
+* `__meta_scaleway_instance_boot_type`: the boot type of the server
+* `__meta_scaleway_instance_hostname`: the hostname of the server
+* `__meta_scaleway_instance_id`: the ID of the server
+* `__meta_scaleway_instance_image_arch`: the arch of the server image
+* `__meta_scaleway_instance_image_id`: the ID of the server image
+* `__meta_scaleway_instance_image_name`: the name of the server image
+* `__meta_scaleway_instance_location_cluster_id`: the cluster ID of the server location
+* `__meta_scaleway_instance_location_hypervisor_id`: the hypervisor ID of the server location
+* `__meta_scaleway_instance_location_node_id`: the node ID of the server location
+* `__meta_scaleway_instance_name`: name of the server
+* `__meta_scaleway_instance_organization_id`: the organization of the server
+* `__meta_scaleway_instance_private_ipv4`: the private IPv4 address of the server
+* `__meta_scaleway_instance_project_id`: project id of the server
+* `__meta_scaleway_instance_public_ipv4`: the public IPv4 address of the server
+* `__meta_scaleway_instance_public_ipv6`: the public IPv6 address of the server
+* `__meta_scaleway_instance_region`: the region of the server
+* `__meta_scaleway_instance_security_group_id`: the ID of the security group of the server
+* `__meta_scaleway_instance_security_group_name`: the name of the security group of the server
+* `__meta_scaleway_instance_status`: status of the server
+* `__meta_scaleway_instance_tags`: the list of tags of the server joined by the tag separator
+* `__meta_scaleway_instance_type`: commercial type of the server
+* `__meta_scaleway_instance_zone`: the zone of the server (ex: `fr-par-1`, complete list [here](https://developers.scaleway.com/en/products/instance/api/#introduction))
+
+This role uses the private IPv4 address by default. This can be
+changed with relabelling, as demonstrated in [the Prometheus scaleway-sd
+configuration file](/documentation/examples/prometheus-scaleway.yml).
+
+#### Baremetal role
+
+* `__meta_scaleway_baremetal_id`: the ID of the server
+* `__meta_scaleway_baremetal_public_ipv4`: the public IPv4 address of the server
+* `__meta_scaleway_baremetal_public_ipv6`: the public IPv6 address of the server
+* `__meta_scaleway_baremetal_name`: the name of the server
+* `__meta_scaleway_baremetal_os_name`: the name of the operating system of the server
+* `__meta_scaleway_baremetal_os_version`: the version of the operating system of the server
+* `__meta_scaleway_baremetal_project_id`: the project ID of the server
+* `__meta_scaleway_baremetal_status`: the status of the server
+* `__meta_scaleway_baremetal_tags`: the list of tags of the server joined by the tag separator
+* `__meta_scaleway_baremetal_type`: the commercial type of the server
+* `__meta_scaleway_baremetal_zone`: the zone of the server (ex: `fr-par-1`, complete list [here](https://developers.scaleway.com/en/products/instance/api/#introduction))
+
+This role uses the public IPv4 address by default. This can be
+changed with relabelling, as demonstrated in [the Prometheus scaleway-sd
+configuration file](/documentation/examples/prometheus-scaleway.yml).
+
+See below for the configuration options for Scaleway discovery:
+
+```yaml
+# Access key to use. https://console.scaleway.com/project/credentials
+access_key: <string>
+
+# Secret key to use when listing targets. https://console.scaleway.com/project/credentials
+# It is mutually exclusive with `secret_key_file`.
+[ secret_key: <secret> ]
+
+# Sets the secret key with the credentials read from the configured file.
+# It is mutually exclusive with `secret_key`.
+[ secret_key_file: <filename> ]
+
+# Project ID of the targets.
+project_id: <string>
+
+# Role of the targets to retrieve. Must be `instance` or `baremetal`.
+role: <string>
+
+# The port to scrape metrics from.
+[ port: <int> | default = 80 ]
+
+# API URL to use when doing the server listing requests.
+[ api_url: <string> | default = "https://api.scaleway.com" ]
+
+# Zone is the availability zone of your targets (e.g. fr-par-1).
+[ zone: <string> | default = fr-par-1 ]
+
+# NameFilter specify a name filter (works as a LIKE) to apply on the server listing request.
+[ name_filter: <string> ]
+
+# TagsFilter specify a tag filter (a server needs to have all defined tags to be listed) to apply on the server listing request.
+tags_filter:
+[ - <string> ]
+
+# Refresh interval to re-read the targets list.
+[ refresh_interval: <duration> | default = 60s ]
+
+# Configure whether HTTP requests follow HTTP 3xx redirects.
+[ follow_redirects: <bool> | default = true ]
+
+# Optional proxy URL.
+[ proxy_url: <string> ]
+
+# TLS configuration.
+tls_config:
+  [ <tls_config> ]
+```
 
 ### `<static_config>`
 
@@ -1653,7 +1851,7 @@ through the `__alerts_path__` label.
 [ timeout: <duration> | default = 10s ]
 
 # The api version of Alertmanager.
-[ api_version: <string> | default = v1 ]
+[ api_version: <string> | default = v2 ]
 
 # Prefix for the HTTP path alerts are pushed to.
 [ path_prefix: <path> | default = / ]
@@ -1718,6 +1916,10 @@ file_sd_configs:
 digitalocean_sd_configs:
   [ - <digitalocean_sd_config> ... ]
 
+# List of Docker service discovery configurations.
+docker_sd_configs:
+  [ - <docker_sd_config> ... ]
+
 # List of Docker Swarm service discovery configurations.
 dockerswarm_sd_configs:
   [ - <dockerswarm_sd_config> ... ]
@@ -1745,6 +1947,10 @@ nerve_sd_configs:
 # List of OpenStack service discovery configurations.
 openstack_sd_configs:
   [ - <openstack_sd_config> ... ]
+
+# List of Scaleway service discovery configurations.
+scaleway_sd_configs:
+  [ - <scaleway_sd_config> ... ]
 
 # List of Zookeeper Serverset service discovery configurations.
 serverset_sd_configs:
@@ -1788,7 +1994,7 @@ headers:
 write_relabel_configs:
   [ - <relabel_config> ... ]
 
-# Name of the remote write config, which if specified must be unique among remote write configs. 
+# Name of the remote write config, which if specified must be unique among remote write configs.
 # The name will be used in metrics and logging in place of a generated value to help users distinguish between
 # remote write configs.
 [ name: <string> ]
@@ -1811,6 +2017,25 @@ authorization:
   # Sets the credentials with the credentials read from the configured file.
   # It is mutually exclusive with `credentials`.
   [ credentials_file: <filename> ]
+
+# Optionally configures AWS's Signature Verification 4 signing process to
+# sign requests. Cannot be set at the same time as basic_auth or authorization.
+# To use the default credentials from the AWS SDK, use `sigv4: {}`.
+sigv4:
+  # The AWS region. If blank, the region from the default credentials chain
+  # is used.
+  [ region: <string> ]
+
+  # The AWS API keys. If blank, the environment variables `AWS_ACCESS_KEY_ID`
+  # and `AWS_SECRET_ACCESS_KEY` are used.
+  [ access_key: <string> ]
+  [ secret_key: <secret> ]
+
+  # Named AWS profile used to authenticate.
+  [ profile: <string> ]
+
+  # AWS Role ARN, an alternative to using AWS API keys.
+  [ role_arn: <string> ]
 
 # Configures the remote write request's TLS settings.
 tls_config:
@@ -1865,7 +2090,7 @@ with this feature.
 # The URL of the endpoint to query from.
 url: <string>
 
-# Name of the remote read config, which if specified must be unique among remote read configs. 
+# Name of the remote read config, which if specified must be unique among remote read configs.
 # The name will be used in metrics and logging in place of a generated value to help users distinguish between
 # remote read configs.
 [ name: <string> ]

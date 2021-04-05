@@ -17,11 +17,14 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
@@ -51,11 +54,16 @@ var (
 		"accept-encoding":                   {},
 		"x-prometheus-remote-write-version": {},
 		"x-prometheus-remote-read-version":  {},
+
+		// Added by SigV4.
+		"x-amz-date":           {},
+		"x-amz-security-token": {},
+		"x-amz-content-sha256": {},
 	}
 )
 
 // Load parses the YAML input s into a Config.
-func Load(s string) (*Config, error) {
+func Load(s string, expandExternalLabels bool, logger log.Logger) (*Config, error) {
 	cfg := &Config{}
 	// If the entire config body is empty the UnmarshalYAML method is
 	// never called. We thus have to set the DefaultConfig at the entry
@@ -66,16 +74,35 @@ func Load(s string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if !expandExternalLabels {
+		return cfg, nil
+	}
+
+	for i, v := range cfg.GlobalConfig.ExternalLabels {
+		newV := os.Expand(v.Value, func(s string) string {
+			if v := os.Getenv(s); v != "" {
+				return v
+			}
+			level.Warn(logger).Log("msg", "Empty environment variable", "name", s)
+			return ""
+		})
+		if newV != v.Value {
+			level.Debug(logger).Log("msg", "External label replaced", "label", v.Name, "input", v.Value, "output", newV)
+			v.Value = newV
+			cfg.GlobalConfig.ExternalLabels[i] = v
+		}
+	}
 	return cfg, nil
 }
 
 // LoadFile parses the given YAML file into a Config.
-func LoadFile(filename string) (*Config, error) {
+func LoadFile(filename string, expandExternalLabels bool, logger log.Logger) (*Config, error) {
 	content, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := Load(string(content))
+	cfg, err := Load(string(content), expandExternalLabels, logger)
 	if err != nil {
 		return nil, errors.Wrapf(err, "parsing YAML file %s", filename)
 	}
@@ -112,7 +139,7 @@ var (
 	DefaultAlertmanagerConfig = AlertmanagerConfig{
 		Scheme:           "http",
 		Timeout:          model.Duration(10 * time.Second),
-		APIVersion:       AlertmanagerAPIVersionV1,
+		APIVersion:       AlertmanagerAPIVersionV2,
 		HTTPClientConfig: config.DefaultHTTPClientConfig,
 	}
 
@@ -601,6 +628,7 @@ type RemoteWriteConfig struct {
 	HTTPClientConfig config.HTTPClientConfig `yaml:",inline"`
 	QueueConfig      QueueConfig             `yaml:"queue_config,omitempty"`
 	MetadataConfig   MetadataConfig          `yaml:"metadata_config,omitempty"`
+	SigV4Config      *SigV4Config            `yaml:"sigv4,omitempty"`
 }
 
 // SetDirectory joins any relative file paths with dir.
@@ -630,7 +658,18 @@ func (c *RemoteWriteConfig) UnmarshalYAML(unmarshal func(interface{}) error) err
 	// The UnmarshalYAML method of HTTPClientConfig is not being called because it's not a pointer.
 	// We cannot make it a pointer as the parser panics for inlined pointer structs.
 	// Thus we just do its validation here.
-	return c.HTTPClientConfig.Validate()
+	if err := c.HTTPClientConfig.Validate(); err != nil {
+		return err
+	}
+
+	httpClientConfigAuthEnabled := c.HTTPClientConfig.BasicAuth != nil ||
+		c.HTTPClientConfig.Authorization != nil
+
+	if httpClientConfigAuthEnabled && c.SigV4Config != nil {
+		return fmt.Errorf("at most one of basic_auth, authorization, & sigv4 must be configured")
+	}
+
+	return nil
 }
 
 func validateHeaders(headers map[string]string) error {
@@ -677,6 +716,17 @@ type MetadataConfig struct {
 	Send bool `yaml:"send"`
 	// SendInterval controls how frequently we send metric metadata.
 	SendInterval model.Duration `yaml:"send_interval"`
+}
+
+// SigV4Config is the configuration for signing remote write requests with
+// AWS's SigV4 verification process. Empty values will be retrieved using the
+// AWS default credentials chain.
+type SigV4Config struct {
+	Region    string        `yaml:"region,omitempty"`
+	AccessKey string        `yaml:"access_key,omitempty"`
+	SecretKey config.Secret `yaml:"secret_key,omitempty"`
+	Profile   string        `yaml:"profile,omitempty"`
+	RoleARN   string        `yaml:"role_arn,omitempty"`
 }
 
 // RemoteReadConfig is the configuration for reading from remote storage.

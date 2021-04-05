@@ -59,6 +59,7 @@ import (
 	"github.com/prometheus/prometheus/discovery"
 	_ "github.com/prometheus/prometheus/discovery/install" // Register service discovery implementations.
 	"github.com/prometheus/prometheus/notifier"
+	"github.com/prometheus/prometheus/pkg/exemplar"
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/logging"
 	"github.com/prometheus/prometheus/pkg/relabel"
@@ -117,7 +118,9 @@ type flagConfig struct {
 	featureList []string
 	// These options are extracted from featureList
 	// for ease of use.
-	enablePromQLAtModifier bool
+	enablePromQLAtModifier     bool
+	enablePromQLNegativeOffset bool
+	enableExpandExternalLabels bool
 
 	prometheusURL   string
 	corsRegexString string
@@ -127,6 +130,9 @@ type flagConfig struct {
 
 // setFeatureListOptions sets the corresponding options from the featureList.
 func (c *flagConfig) setFeatureListOptions(logger log.Logger) error {
+	maxExemplars := c.tsdb.MaxExemplars
+	// Disabled at first. Value from the flag is used if exemplar-storage is set.
+	c.tsdb.MaxExemplars = 0
 	for _, f := range c.featureList {
 		opts := strings.Split(f, ",")
 		for _, o := range opts {
@@ -134,9 +140,18 @@ func (c *flagConfig) setFeatureListOptions(logger log.Logger) error {
 			case "promql-at-modifier":
 				c.enablePromQLAtModifier = true
 				level.Info(logger).Log("msg", "Experimental promql-at-modifier enabled")
+			case "promql-negative-offset":
+				c.enablePromQLNegativeOffset = true
+				level.Info(logger).Log("msg", "Experimental promql-negative-offset enabled")
 			case "remote-write-receiver":
 				c.web.RemoteWriteReceiver = true
 				level.Info(logger).Log("msg", "Experimental remote-write-receiver enabled")
+			case "expand-external-labels":
+				c.enableExpandExternalLabels = true
+				level.Info(logger).Log("msg", "Experimental expand-external-labels enabled")
+			case "exemplar-storage":
+				c.tsdb.MaxExemplars = maxExemplars
+				level.Info(logger).Log("msg", "Experimental in-memory exemplar storage enabled")
 			case "":
 				continue
 			default:
@@ -263,6 +278,9 @@ func main() {
 	a.Flag("storage.remote.read-max-bytes-in-frame", "Maximum number of bytes in a single frame for streaming remote read response types before marshalling. Note that client might have limit on frame size as well. 1MB as recommended by protobuf by default.").
 		Default("1048576").IntVar(&cfg.web.RemoteReadBytesInFrame)
 
+	a.Flag("storage.exemplars.exemplars-limit", "[EXPERIMENTAL] Maximum number of exemplars to store in in-memory exemplar storage total. 0 disables the exemplar storage. This flag is effective only with --enable-feature=exemplar-storage.").
+		Default("100000").IntVar(&cfg.tsdb.MaxExemplars)
+
 	a.Flag("rules.alert.for-outage-tolerance", "Max time to tolerate prometheus outage for restoring \"for\" state of alert.").
 		Default("1h").SetValue(&cfg.outageTolerance)
 
@@ -293,7 +311,7 @@ func main() {
 	a.Flag("query.max-samples", "Maximum number of samples a single query can load into memory. Note that queries will fail if they try to load more samples than this into memory, so this also limits the number of samples a query can return.").
 		Default("50000000").IntVar(&cfg.queryMaxSamples)
 
-	a.Flag("enable-feature", "Comma separated feature names to enable. Valid options: 'promql-at-modifier' to enable the @ modifier, 'remote-write-receiver' to enable remote write receiver. See https://prometheus.io/docs/prometheus/latest/disabled_features/ for more details.").
+	a.Flag("enable-feature", "Comma separated feature names to enable. Valid options: promql-at-modifier, promql-negative-offset, remote-write-receiver, exemplar-storage, expand-external-labels. See https://prometheus.io/docs/prometheus/latest/disabled_features/ for more details.").
 		Default("").StringsVar(&cfg.featureList)
 
 	promlogflag.AddFlags(a, &cfg.promlogConfig)
@@ -329,7 +347,7 @@ func main() {
 	}
 
 	// Throw error for invalid config before starting other components.
-	if _, err := config.LoadFile(cfg.configFile); err != nil {
+	if _, err := config.LoadFile(cfg.configFile, false, log.NewNopLogger()); err != nil {
 		level.Error(logger).Log("msg", fmt.Sprintf("Error loading config (--config.file=%s)", cfg.configFile), "err", err)
 		os.Exit(2)
 	}
@@ -441,6 +459,7 @@ func main() {
 			LookbackDelta:            time.Duration(cfg.lookbackDelta),
 			NoStepSubqueryIntervalFn: noStepSubqueryInterval.Get,
 			EnableAtModifier:         cfg.enablePromQLAtModifier,
+			EnableNegativeOffset:     cfg.enablePromQLNegativeOffset,
 		}
 
 		queryEngine = promql.NewEngine(opts)
@@ -468,6 +487,7 @@ func main() {
 	cfg.web.TSDBDir = cfg.localStoragePath
 	cfg.web.LocalStorage = localStorage
 	cfg.web.Storage = fanoutStorage
+	cfg.web.ExemplarStorage = localStorage
 	cfg.web.QueryEngine = queryEngine
 	cfg.web.ScrapeManager = scrapeManager
 	cfg.web.RuleManager = ruleManager
@@ -705,11 +725,11 @@ func main() {
 				for {
 					select {
 					case <-hup:
-						if err := reloadConfig(cfg.configFile, logger, noStepSubqueryInterval, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.enableExpandExternalLabels, logger, noStepSubqueryInterval, reloaders...); err != nil {
 							level.Error(logger).Log("msg", "Error reloading config", "err", err)
 						}
 					case rc := <-webHandler.Reload():
-						if err := reloadConfig(cfg.configFile, logger, noStepSubqueryInterval, reloaders...); err != nil {
+						if err := reloadConfig(cfg.configFile, cfg.enableExpandExternalLabels, logger, noStepSubqueryInterval, reloaders...); err != nil {
 							level.Error(logger).Log("msg", "Error reloading config", "err", err)
 							rc <- err
 						} else {
@@ -741,7 +761,7 @@ func main() {
 					return nil
 				}
 
-				if err := reloadConfig(cfg.configFile, logger, noStepSubqueryInterval, reloaders...); err != nil {
+				if err := reloadConfig(cfg.configFile, cfg.enableExpandExternalLabels, logger, noStepSubqueryInterval, reloaders...); err != nil {
 					return errors.Wrapf(err, "error loading config from %q", cfg.configFile)
 				}
 
@@ -922,7 +942,7 @@ type reloader struct {
 	reloader func(*config.Config) error
 }
 
-func reloadConfig(filename string, logger log.Logger, noStepSuqueryInterval *safePromQLNoStepSubqueryInterval, rls ...reloader) (err error) {
+func reloadConfig(filename string, expandExternalLabels bool, logger log.Logger, noStepSuqueryInterval *safePromQLNoStepSubqueryInterval, rls ...reloader) (err error) {
 	start := time.Now()
 	timings := []interface{}{}
 	level.Info(logger).Log("msg", "Loading configuration file", "filename", filename)
@@ -936,7 +956,7 @@ func reloadConfig(filename string, logger log.Logger, noStepSuqueryInterval *saf
 		}
 	}()
 
-	conf, err := config.LoadFile(filename)
+	conf, err := config.LoadFile(filename, expandExternalLabels, logger)
 	if err != nil {
 		return errors.Wrapf(err, "couldn't load configuration (--config.file=%q)", filename)
 	}
@@ -1095,6 +1115,13 @@ func (s *readyStorage) ChunkQuerier(ctx context.Context, mint, maxt int64) (stor
 	return nil, tsdb.ErrNotReady
 }
 
+func (s *readyStorage) ExemplarQuerier(ctx context.Context) (storage.ExemplarQuerier, error) {
+	if x := s.get(); x != nil {
+		return x.ExemplarQuerier(ctx)
+	}
+	return nil, tsdb.ErrNotReady
+}
+
 // Appender implements the Storage interface.
 func (s *readyStorage) Appender(ctx context.Context) storage.Appender {
 	if x := s.get(); x != nil {
@@ -1106,6 +1133,10 @@ func (s *readyStorage) Appender(ctx context.Context) storage.Appender {
 type notReadyAppender struct{}
 
 func (n notReadyAppender) Append(ref uint64, l labels.Labels, t int64, v float64) (uint64, error) {
+	return 0, tsdb.ErrNotReady
+}
+
+func (n notReadyAppender) AppendExemplar(ref uint64, l labels.Labels, e exemplar.Exemplar) (uint64, error) {
 	return 0, tsdb.ErrNotReady
 }
 
@@ -1194,6 +1225,7 @@ type tsdbOptions struct {
 	StripeSize             int
 	MinBlockDuration       model.Duration
 	MaxBlockDuration       model.Duration
+	MaxExemplars           int
 }
 
 func (opts tsdbOptions) ToTSDBOptions() tsdb.Options {
@@ -1207,6 +1239,7 @@ func (opts tsdbOptions) ToTSDBOptions() tsdb.Options {
 		StripeSize:             opts.StripeSize,
 		MinBlockDuration:       int64(time.Duration(opts.MinBlockDuration) / time.Millisecond),
 		MaxBlockDuration:       int64(time.Duration(opts.MaxBlockDuration) / time.Millisecond),
+		MaxExemplars:           opts.MaxExemplars,
 	}
 }
 
