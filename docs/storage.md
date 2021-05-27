@@ -13,7 +13,13 @@ Prometheus's local time series database stores data in a custom, highly efficien
 
 ### On-disk layout
 
-Ingested samples are grouped into blocks of two hours. Each two-hour block consists of a directory containing one or more chunk files that contain all time series samples for that window of time, as well as a metadata file and index file (which indexes metric names and labels to time series in the chunk files). When series are deleted via the API, deletion records are stored in separate tombstone files (instead of deleting the data immediately from the chunk files).
+Ingested samples are grouped into blocks of two hours. Each two-hour block consists
+of a directory containing a chunks subdirectory containing all the time series samples
+for that window of time, a metadata file, and an index file (which indexes metric names
+and labels to time series in the chunks directory). The samples in the chunks directory
+are grouped together into one or more segment files of up to 512MB each by default. When series are
+deleted via the API, deletion records are stored in separate tombstone files (instead
+of deleting the data immediately from the chunk segments).
 
 The current block for incoming samples is kept in memory and is not fully
 persisted. It is secured against crashes by a write-ahead log (WAL) that can be
@@ -180,4 +186,4 @@ The output of `promtool tsdb create-blocks-from rules` command is a directory th
 - All rules in the recording rule files will be evaluated.
 - If the `interval` is set in the recording rule file that will take priority over the `eval-interval` flag in the rule backfill command.
 - Alerts are currently ignored if they are in the recording rule file.
-- Rules in the same group cannot see the results of previous rules. Meaning that rules that refer to other rules being backfilled is not supported. A workaround is to backfill mulitple times and create the dependent data first (and move dependent data to the Prometheus server data dir so that it is accessible from the Prometheus API).
+- Rules in the same group cannot see the results of previous rules. Meaning that rules that refer to other rules being backfilled is not supported. A workaround is to backfill multiple times and create the dependent data first (and move dependent data to the Prometheus server data dir so that it is accessible from the Prometheus API).
