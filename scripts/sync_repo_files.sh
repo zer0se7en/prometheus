@@ -15,14 +15,19 @@ orgs="prometheus prometheus-community"
 
 color_red='\e[31m'
 color_green='\e[32m'
+color_yellow='\e[33m'
 color_none='\e[0m'
 
 echo_red() {
-  echo -e "${color_red}$@${color_none}"
+  echo -e "${color_red}$@${color_none}" 1>&2
 }
 
 echo_green() {
-  echo -e "${color_green}$@${color_none}"
+  echo -e "${color_green}$@${color_none}" 1>&2
+}
+
+echo_yellow() {
+  echo -e "${color_yellow}$@${color_none}" 1>&2
 }
 
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
@@ -32,7 +37,7 @@ if [ -z "${GITHUB_TOKEN}" ]; then
 fi
 
 # List of files that should be synced.
-SYNC_FILES="CODE_OF_CONDUCT.md LICENSE Makefile.common SECURITY.md"
+SYNC_FILES="CODE_OF_CONDUCT.md LICENSE Makefile.common SECURITY.md .yamllint"
 
 # Go to the root of the repo
 cd "$(git rev-parse --show-cdup)" || exit 1
@@ -100,8 +105,8 @@ check_circleci_orb() {
 
   orb_version="$(curl -sL --fail "${ci_config_url}" | yq eval '.orbs.prometheus' -)"
   if [[ -z "${orb_version}" ]]; then
-    echo_red "ERROR: Failed to fetch CirleCI orb version from '${org_repo}'"
-    return 1
+    echo_yellow "WARNING: Failed to fetch CirleCI orb version from '${org_repo}'"
+    return 0
   fi
 
   if [[ "${orb_version}" != "null" && "${orb_version}" != "${prometheus_orb_version}" ]]; then

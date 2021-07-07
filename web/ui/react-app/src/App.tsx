@@ -4,7 +4,17 @@ import { Container } from 'reactstrap';
 
 import { Router, Redirect } from '@reach/router';
 import useMedia from 'use-media';
-import { Alerts, Config, Flags, Rules, ServiceDiscovery, Status, Targets, TSDBStatus, PanelList } from './pages';
+import {
+  AlertsPage,
+  ConfigPage,
+  FlagsPage,
+  RulesPage,
+  ServiceDiscoveryPage,
+  StatusPage,
+  TargetsPage,
+  TSDBStatusPage,
+  PanelListPage,
+} from './pages';
 import { PathPrefixContext } from './contexts/PathPrefixContext';
 import { ThemeContext, themeName, themeSetting } from './contexts/ThemeContext';
 import { Theme, themeLocalStorageKey } from './Theme';
@@ -67,15 +77,15 @@ const App: FC<AppProps> = ({ consolesLink }) => {
               NOTE: Any route added here needs to also be added to the list of
               React-handled router paths ("reactRouterPaths") in /web/web.go.
             */}
-            <PanelList path="/graph" />
-            <Alerts path="/alerts" />
-            <Config path="/config" />
-            <Flags path="/flags" />
-            <Rules path="/rules" />
-            <ServiceDiscovery path="/service-discovery" />
-            <Status path="/status" />
-            <TSDBStatus path="/tsdb-status" />
-            <Targets path="/targets" />
+            <PanelListPage path="/graph" />
+            <AlertsPage path="/alerts" />
+            <ConfigPage path="/config" />
+            <FlagsPage path="/flags" />
+            <RulesPage path="/rules" />
+            <ServiceDiscoveryPage path="/service-discovery" />
+            <StatusPage path="/status" />
+            <TSDBStatusPage path="/tsdb-status" />
+            <TargetsPage path="/targets" />
           </Router>
         </Container>
       </PathPrefixContext.Provider>

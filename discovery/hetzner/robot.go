@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-kit/kit/log"
+	"github.com/go-kit/log"
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
@@ -92,8 +92,13 @@ func (d *robotDiscovery) refresh(ctx context.Context) ([]*targetgroup.Group, err
 		return nil, errors.Errorf("non 2xx status '%d' response during hetzner service discovery with role robot", resp.StatusCode)
 	}
 
+	b, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
 	var servers serversList
-	err = json.NewDecoder(resp.Body).Decode(&servers)
+	err = json.Unmarshal(b, &servers)
 	if err != nil {
 		return nil, err
 	}

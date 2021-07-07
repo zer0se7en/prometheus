@@ -35,8 +35,9 @@ import (
 	"time"
 
 	"github.com/alecthomas/units"
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
+	kitloglevel "github.com/go-kit/kit/log/level"
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	conntrack "github.com/mwitkow/go-conntrack"
 	"github.com/oklog/run"
 	"github.com/opentracing/opentracing-go"
@@ -258,7 +259,7 @@ func main() {
 	a.Flag("storage.tsdb.retention.time", "How long to retain samples in storage. When this flag is set it overrides \"storage.tsdb.retention\". If neither this flag nor \"storage.tsdb.retention\" nor \"storage.tsdb.retention.size\" is set, the retention time defaults to "+defaultRetentionString+". Units Supported: y, w, d, h, m, s, ms.").
 		SetValue(&newFlagRetentionDuration)
 
-	a.Flag("storage.tsdb.retention.size", "[EXPERIMENTAL] Maximum number of bytes that can be stored for blocks. A unit is required, supported units: B, KB, MB, GB, TB, PB, EB. Ex: \"512MB\". This flag is experimental and can be changed in future releases.").
+	a.Flag("storage.tsdb.retention.size", "Maximum number of bytes that can be stored for blocks. A unit is required, supported units: B, KB, MB, GB, TB, PB, EB. Ex: \"512MB\". This flag is experimental and can be changed in future releases.").
 		BytesVar(&cfg.tsdb.MaxBytes)
 
 	a.Flag("storage.tsdb.no-lockfile", "Do not create lockfile in data directory.").
@@ -417,11 +418,27 @@ func main() {
 	noStepSubqueryInterval := &safePromQLNoStepSubqueryInterval{}
 	noStepSubqueryInterval.Set(config.DefaultGlobalConfig.EvaluationInterval)
 
+	// FIXME: Temporary workaround until a proper solution is found. go-kit's
+	// level packages use private types to determine the level so we have to use
+	// the same level package as the underlying library.
+	var lvl kitloglevel.Option
+	switch cfg.promlogConfig.Level.String() {
+	case "debug":
+		lvl = kitloglevel.AllowDebug()
+	case "info":
+		lvl = kitloglevel.AllowInfo()
+	case "warn":
+		lvl = kitloglevel.AllowWarn()
+	case "error":
+		lvl = kitloglevel.AllowError()
+	}
+	kloglogger := kitloglevel.NewFilter(logger, lvl)
+
 	// Above level 6, the k8s client would log bearer tokens in clear-text.
 	klog.ClampLevel(6)
-	klog.SetLogger(log.With(logger, "component", "k8s_client_runtime"))
+	klog.SetLogger(log.With(kloglogger, "component", "k8s_client_runtime"))
 	klogv2.ClampLevel(6)
-	klogv2.SetLogger(log.With(logger, "component", "k8s_client_runtime"))
+	klogv2.SetLogger(log.With(kloglogger, "component", "k8s_client_runtime"))
 
 	level.Info(logger).Log("msg", "Starting Prometheus", "version", version.Info())
 	if bits.UintSize < 64 {
@@ -434,7 +451,7 @@ func main() {
 	level.Info(logger).Log("vm_limits", prom_runtime.VMLimits())
 
 	var (
-		localStorage  = &readyStorage{}
+		localStorage  = &readyStorage{stats: tsdb.NewDBStats()}
 		scraper       = &readyScrapeManager{}
 		remoteStorage = remote.NewStorage(log.With(logger, "component", "remote"), prometheus.DefaultRegisterer, localStorage.StartTime, cfg.localStoragePath, time.Duration(cfg.RemoteFlushDeadline), scraper)
 		fanoutStorage = storage.NewFanout(logger, localStorage, remoteStorage)
@@ -527,6 +544,9 @@ func main() {
 		conntrack.DialWithTracing(),
 	)
 
+	// This is passed to ruleManager.Update().
+	var externalURL = cfg.web.ExternalURL.String()
+
 	reloaders := []reloader{
 		{
 			name:     "remote_storage",
@@ -592,6 +612,7 @@ func main() {
 					time.Duration(cfg.GlobalConfig.EvaluationInterval),
 					files,
 					cfg.GlobalConfig.ExternalLabels,
+					externalURL,
 				)
 			},
 		},
@@ -811,11 +832,13 @@ func main() {
 						return errors.New("flag 'storage.tsdb.max-block-chunk-segment-size' must be set over 1MB")
 					}
 				}
+
 				db, err := openDBWithMetrics(
 					cfg.localStoragePath,
 					logger,
 					prometheus.DefaultRegisterer,
 					&opts,
+					localStorage.getStats(),
 				)
 				if err != nil {
 					return errors.Wrapf(err, "opening storage failed")
@@ -897,12 +920,13 @@ func main() {
 	level.Info(logger).Log("msg", "See you next time!")
 }
 
-func openDBWithMetrics(dir string, logger log.Logger, reg prometheus.Registerer, opts *tsdb.Options) (*tsdb.DB, error) {
+func openDBWithMetrics(dir string, logger log.Logger, reg prometheus.Registerer, opts *tsdb.Options, stats *tsdb.DBStats) (*tsdb.DB, error) {
 	db, err := tsdb.Open(
 		dir,
 		log.With(logger, "component", "tsdb"),
 		reg,
 		opts,
+		stats,
 	)
 	if err != nil {
 		return nil, err
@@ -1072,6 +1096,7 @@ type readyStorage struct {
 	mtx             sync.RWMutex
 	db              *tsdb.DB
 	startTimeMargin int64
+	stats           *tsdb.DBStats
 }
 
 // Set the storage.
@@ -1083,10 +1108,16 @@ func (s *readyStorage) Set(db *tsdb.DB, startTimeMargin int64) {
 	s.startTimeMargin = startTimeMargin
 }
 
-// get is internal, you should use readyStorage as the front implementation layer.
 func (s *readyStorage) get() *tsdb.DB {
 	s.mtx.RLock()
 	x := s.db
+	s.mtx.RUnlock()
+	return x
+}
+
+func (s *readyStorage) getStats() *tsdb.DBStats {
+	s.mtx.RLock()
+	x := s.stats
 	s.mtx.RUnlock()
 	return x
 }
@@ -1191,6 +1222,14 @@ func (s *readyStorage) Stats(statsByLabelName string) (*tsdb.Stats, error) {
 		return x.Head().Stats(statsByLabelName), nil
 	}
 	return nil, tsdb.ErrNotReady
+}
+
+// WALReplayStatus implements the api_v1.TSDBStats interface.
+func (s *readyStorage) WALReplayStatus() (tsdb.WALReplayStatus, error) {
+	if x := s.getStats(); x != nil {
+		return x.Head.WALReplayStatus.GetWALReplayStatus(), nil
+	}
+	return tsdb.WALReplayStatus{}, tsdb.ErrNotReady
 }
 
 // ErrNotReady is returned if the underlying scrape manager is not ready yet.
